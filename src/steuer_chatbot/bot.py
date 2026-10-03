@@ -41,8 +41,16 @@ CATEGORY_LABELS = {
     Category.WEITERBILDUNG: "Weiterbildung",
     Category.ARBEITSMITTEL: "Arbeitsmittel",
 }
+COST_QUESTIONS = {
+    Category.ARBEITSMITTEL: "Wie hoch waren die Kosten in Euro? (z. B. 49,99)",
+    # One lump cost per Weiterbildung Entry, not itemized (ADR-0001).
+    Category.WEITERBILDUNG: (
+        "Wie hoch waren die Gesamtkosten in Euro"
+        " (Kursgebühr, Fahrt, Hotel und Verpflegung zusammen)? (z. B. 890,00)"
+    ),
+}
 # Categories with a working guided flow; the others are built in later tickets.
-IMPLEMENTED_CATEGORIES = {Category.ARBEITSMITTEL}
+IMPLEMENTED_CATEGORIES = {Category.ARBEITSMITTEL, Category.WEITERBILDUNG}
 
 CANCELLED_TEXT = "Abgebrochen. Nichts wurde gespeichert."
 STALE_BUTTON_TEXT = "Dieser Button ist nicht mehr aktiv."
@@ -133,7 +141,8 @@ async def receive_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await telegram_file.download_to_drive(receipt_path)
     context.user_data["receipt"] = receipt_path
 
-    await message.reply_text("Beleg erhalten. Wie hoch waren die Kosten in Euro? (z. B. 49,99)")
+    category: Category = context.user_data["category"]
+    await message.reply_text(f"Beleg erhalten. {COST_QUESTIONS[category]}")
     return AWAITING_COST
 
 
@@ -143,7 +152,8 @@ async def receive_cost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     try:
         context.user_data["cost_cents"] = parse_cost_cents(message.text)
     except ValueError:
-        await message.reply_text("Das ist kein gültiger Betrag. Bitte z. B. 49,99 eingeben.")
+        category: Category = context.user_data["category"]
+        await message.reply_text(f"Das ist kein gültiger Betrag. {COST_QUESTIONS[category]}")
         return AWAITING_COST
     await message.reply_text("Von welchem Datum ist der Beleg? (JJJJ-MM-TT oder TT.MM.JJJJ)")
     return AWAITING_DATE

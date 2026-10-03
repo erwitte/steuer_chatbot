@@ -15,30 +15,41 @@ def fetch_row(conn: psycopg.Connection, entry_id: int) -> tuple[object, ...] | N
     ).fetchone()
 
 
-def test_arbeitsmittel_entry_with_photo_receipt_is_persisted(
-    conn: psycopg.Connection, receipts_dir: Path, download_dir: Path
+@pytest.mark.parametrize(
+    ("category", "receipt_name", "receipt_bytes", "entry_date", "tax_year", "cost_cents", "stored_as"),
+    [
+        ("arbeitsmittel", "file_42.jpg", b"jpeg-bytes", date(2025, 3, 14), 2025, 4999, "arbeitsmittel/{id}.jpg"),
+        ("weiterbildung", "rechnung.pdf", b"%PDF-1.7", date(2024, 12, 31), 2024, 89000, "weiterbildung/{id}.pdf"),
+    ],
+)
+def test_entry_with_receipt_is_persisted(
+    conn: psycopg.Connection,
+    receipts_dir: Path,
+    download_dir: Path,
+    category: str,
+    receipt_name: str,
+    receipt_bytes: bytes,
+    entry_date: date,
+    tax_year: int,
+    cost_cents: int,
+    stored_as: str,
 ) -> None:
-    photo = download_dir / "file_42.jpg"
-    photo.write_bytes(b"jpeg-bytes")
+    receipt = download_dir / receipt_name
+    receipt.write_bytes(receipt_bytes)
 
     entry = create_entry(
         conn,
         receipts_dir,
-        category="arbeitsmittel",
-        entry_date=date(2025, 3, 14),
-        cost_cents=4999,
-        receipt_source_path=photo,
+        category=category,
+        entry_date=entry_date,
+        cost_cents=cost_cents,
+        receipt_source_path=receipt,
     )
 
-    assert fetch_row(conn, entry.id) == (
-        "arbeitsmittel",
-        date(2025, 3, 14),
-        2025,
-        4999,
-        f"arbeitsmittel/{entry.id}.jpg",
-    )
-    assert (receipts_dir / f"arbeitsmittel/{entry.id}.jpg").read_bytes() == b"jpeg-bytes"
-    assert not photo.exists()
+    receipt_path = stored_as.format(id=entry.id)
+    assert fetch_row(conn, entry.id) == (category, entry_date, tax_year, cost_cents, receipt_path)
+    assert (receipts_dir / receipt_path).read_bytes() == receipt_bytes
+    assert not receipt.exists()
 
 
 def test_no_entry_is_persisted_when_the_receipt_cannot_be_stored(
