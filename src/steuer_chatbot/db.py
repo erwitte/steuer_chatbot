@@ -1,0 +1,19 @@
+import psycopg
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS entries (
+    id SERIAL PRIMARY KEY,
+    category TEXT NOT NULL CHECK (category IN ('homeoffice_pauschale', 'pendlerpauschale', 'weiterbildung', 'arbeitsmittel')),
+    entry_date DATE NOT NULL,
+    tax_year INTEGER NOT NULL,
+    cost_cents INTEGER,       -- NULL for homeoffice_pauschale / pendlerpauschale
+    receipt_path TEXT,        -- NULL for homeoffice_pauschale / pendlerpauschale; relative path under RECEIPTS_DIR
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"""
+
+
+def migrate(conn: psycopg.Connection) -> None:
+    """Create the schema if it doesn't exist yet. Safe to run on every startup."""
+    with conn.transaction():
+        conn.execute(SCHEMA)

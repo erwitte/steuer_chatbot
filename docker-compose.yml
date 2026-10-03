@@ -1,0 +1,32 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Inside the container Receipts always live at /data/receipts;
+      # RECEIPTS_DIR in .env is the host directory bind-mounted there.
+      RECEIPTS_DIR: /data/receipts
+    volumes:
+      - ${RECEIPTS_DIR:?set RECEIPTS_DIR in .env}:/data/receipts
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
