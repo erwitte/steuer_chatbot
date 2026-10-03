@@ -1,5 +1,6 @@
 """Service layer for Entries. No Telegram types in here."""
 
+import logging
 import shutil
 from dataclasses import dataclass
 from datetime import date
@@ -9,6 +10,8 @@ from pathlib import Path
 import psycopg
 
 from steuer_chatbot.settings import get_commute_distance
+
+log = logging.getLogger(__name__)
 
 
 class Category(StrEnum):
@@ -95,3 +98,24 @@ def create_entry(
         raise
 
     return Entry(entry_id, category, entry_date, tax_year, cost_cents, receipt_path)
+
+
+def delete_entry(conn: psycopg.Connection, receipts_dir: Path, entry_id: int) -> bool:
+    """Delete an Entry and its Receipt file. Returns False if no Entry has that id."""
+    # The row goes first: a crash before the file is removed leaves an orphan file,
+    # never an Entry pointing at a missing Receipt.
+    with conn.transaction():
+        row = conn.execute(
+            "DELETE FROM entries WHERE id = %s RETURNING receipt_path", (entry_id,)
+        ).fetchone()
+    if row is None:
+        return False
+
+    receipt_path: str | None = row[0]
+    if receipt_path is not None:
+        try:
+            (receipts_dir / receipt_path).unlink(missing_ok=True)
+        except OSError:
+            # The Entry is already gone; report success and leave the orphan for manual cleanup.
+            log.exception("Entry %d deleted, but its Receipt %s could not be removed", entry_id, receipt_path)
+    return True

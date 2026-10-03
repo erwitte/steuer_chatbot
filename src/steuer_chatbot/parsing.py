@@ -3,8 +3,11 @@
 import re
 from datetime import date, datetime
 
+from steuer_chatbot.db import MAX_ENTRY_ID
+
 _COST = re.compile(r"(\d+)(?:[.,](\d{1,2}))?")
 _COMMUTE_DISTANCE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:km)?", re.IGNORECASE)
+_ENTRY_ID = re.compile(r"#?(\d+)")
 _DATE_FORMATS = ("%Y-%m-%d", "%d.%m.%Y")
 
 
@@ -39,3 +42,14 @@ def parse_commute_distance_km(text: str) -> float:
     if km <= 0:
         raise ValueError(f"Distance must be positive: {text!r}")
     return km
+
+
+def parse_entry_id(text: str) -> int:
+    """Parse an Entry id like "42" or "#42"."""
+    match = _ENTRY_ID.fullmatch(text.strip())
+    if match is None:
+        raise ValueError(f"Not a valid Entry id: {text!r}")
+    entry_id = int(match.group(1))
+    if not 1 <= entry_id <= MAX_ENTRY_ID:
+        raise ValueError(f"Entry id out of range: {text!r}")
+    return entry_id

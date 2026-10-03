@@ -26,8 +26,13 @@ from telegram.ext import (
 )
 
 from steuer_chatbot.config import Config
-from steuer_chatbot.entries import Category, Entry, create_entry
-from steuer_chatbot.parsing import parse_commute_distance_km, parse_cost_cents, parse_entry_date
+from steuer_chatbot.entries import Category, Entry, create_entry, delete_entry
+from steuer_chatbot.parsing import (
+    parse_commute_distance_km,
+    parse_cost_cents,
+    parse_entry_date,
+    parse_entry_id,
+)
 from steuer_chatbot.settings import get_commute_distance, set_commute_distance
 
 log = logging.getLogger(__name__)
@@ -302,6 +307,32 @@ async def set_distance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await message.reply_text(f"Pendelstrecke gespeichert: {km_text} km (Hin- und Rückweg).")
 
 
+async def delete_entry_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    assert message is not None
+    try:
+        entry_id = parse_entry_id(" ".join(context.args or []))
+    except ValueError:
+        await message.reply_text("Bitte gib die Nummer des Eintrags an, z. B. /delete 42")
+        return
+
+    try:
+        deleted = await asyncio.to_thread(_delete_entry, _config(context), entry_id)
+    except Exception:
+        log.exception("Deleting Entry %d failed", entry_id)
+        await message.reply_text("Löschen fehlgeschlagen. Bitte später erneut versuchen.")
+        return
+    if deleted:
+        await message.reply_text(f"Eintrag #{entry_id} gelöscht.")
+    else:
+        await message.reply_text(f"Es gibt keinen Eintrag #{entry_id}.")
+
+
+def _delete_entry(config: Config, entry_id: int) -> bool:
+    with psycopg.connect(config.database_url) as conn:
+        return delete_entry(conn, config.receipts_dir, entry_id)
+
+
 def _load_commute_distance(config: Config) -> float | None:
     with psycopg.connect(config.database_url) as conn:
         return get_commute_distance(conn)
@@ -360,8 +391,9 @@ def build_application(config: Config) -> Application:  # type: ignore[type-arg]
     application.bot_data["config"] = config
 
     application.add_handler(TypeHandler(Update, gate), group=-1)
-    # Registered before the guided flow so it also works while a flow is in progress.
+    # Registered before the guided flow so they also work while a flow is in progress.
     application.add_handler(CommandHandler("setdistance", set_distance))
+    application.add_handler(CommandHandler("delete", delete_entry_command))
     application.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler(["start", "new"], start)],

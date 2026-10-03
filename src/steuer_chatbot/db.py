@@ -1,5 +1,8 @@
 import psycopg
 
+# entries.id is a SERIAL (Postgres INTEGER), so no Entry can have a larger id.
+MAX_ENTRY_ID = 2**31 - 1
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries (
     id SERIAL PRIMARY KEY,
