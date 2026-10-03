@@ -28,7 +28,7 @@ from telegram.ext import (
 from steuer_chatbot.config import Config
 from steuer_chatbot.entries import Category, Entry, create_entry
 from steuer_chatbot.parsing import parse_commute_distance_km, parse_cost_cents, parse_entry_date
-from steuer_chatbot.settings import set_commute_distance
+from steuer_chatbot.settings import get_commute_distance, set_commute_distance
 
 log = logging.getLogger(__name__)
 
@@ -134,6 +134,22 @@ async def choose_category(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     label = CATEGORY_PROMPTS[category].label
 
     await query.answer()
+    if category.requires_commute_distance:
+        try:
+            commute_distance = await asyncio.to_thread(_load_commute_distance, _config(context))
+        except Exception:
+            log.exception("Loading Commute Distance failed")
+            _reset_flow(context)
+            await query.edit_message_text("Datenbank nicht erreichbar. Bitte später mit /start erneut versuchen.")
+            return ConversationHandler.END
+        if commute_distance is None:
+            _reset_flow(context)
+            await query.edit_message_text(
+                f"{label}: Bitte lege zuerst deine Pendelstrecke (Hin- und Rückweg) fest,"
+                " z. B. /setdistance 42 – und starte dann mit /start neu."
+            )
+            return ConversationHandler.END
+
     context.user_data["category"] = category
     if not category.has_cost_and_receipt:
         # Flat-rate Categories go straight to the date: no Receipt, no cost.
@@ -284,6 +300,11 @@ async def set_distance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     km_text = f"{km:g}".replace(".", ",")
     await message.reply_text(f"Pendelstrecke gespeichert: {km_text} km (Hin- und Rückweg).")
+
+
+def _load_commute_distance(config: Config) -> float | None:
+    with psycopg.connect(config.database_url) as conn:
+        return get_commute_distance(conn)
 
 
 def _store_commute_distance(config: Config, km: float) -> None:

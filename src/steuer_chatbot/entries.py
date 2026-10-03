@@ -8,6 +8,8 @@ from pathlib import Path
 
 import psycopg
 
+from steuer_chatbot.settings import get_commute_distance
+
 
 class Category(StrEnum):
     HOMEOFFICE_PAUSCHALE = "homeoffice_pauschale"
@@ -19,6 +21,11 @@ class Category(StrEnum):
     def has_cost_and_receipt(self) -> bool:
         """Flat-rate Categories have neither a cost nor a Receipt."""
         return self in (Category.WEITERBILDUNG, Category.ARBEITSMITTEL)
+
+    @property
+    def requires_commute_distance(self) -> bool:
+        """Pendlerpauschale is calculated against the Commute Distance, so it must be set first."""
+        return self is Category.PENDLERPAUSCHALE
 
 
 @dataclass(frozen=True)
@@ -59,6 +66,8 @@ def create_entry(
     moved_receipt: Path | None = None
     try:
         with conn.transaction():
+            if category.requires_commute_distance and get_commute_distance(conn) is None:
+                raise ValueError(f"A {category} Entry requires the Commute Distance to be set")
             row = conn.execute(
                 "INSERT INTO entries (category, entry_date, tax_year, cost_cents)"
                 " VALUES (%s, %s, %s, %s) RETURNING id",

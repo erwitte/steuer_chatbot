@@ -5,6 +5,7 @@ import psycopg
 import pytest
 
 from steuer_chatbot.entries import create_entry
+from steuer_chatbot.settings import set_commute_distance
 
 
 def fetch_row(conn: psycopg.Connection, entry_id: int) -> tuple[object, ...] | None:
@@ -127,6 +128,8 @@ FLAT_RATE_CATEGORIES = ["homeoffice_pauschale", "pendlerpauschale"]
 def test_flat_rate_entry_has_no_cost_and_no_receipt(
     conn: psycopg.Connection, receipts_dir: Path, category: str
 ) -> None:
+    set_commute_distance(conn, 42.0)
+
     entry = create_entry(
         conn,
         receipts_dir,
@@ -169,3 +172,19 @@ def test_flat_rate_entry_rejects_a_cost_or_receipt(
 
     assert conn.execute("SELECT count(*) FROM entries").fetchone() == (0,)
     assert photo.exists()
+
+
+def test_pendlerpauschale_entry_requires_a_commute_distance(
+    conn: psycopg.Connection, receipts_dir: Path
+) -> None:
+    with pytest.raises(ValueError, match="Commute Distance"):
+        create_entry(
+            conn,
+            receipts_dir,
+            category="pendlerpauschale",
+            entry_date=date(2025, 1, 2),
+            cost_cents=None,
+            receipt_source_path=None,
+        )
+
+    assert conn.execute("SELECT count(*) FROM entries").fetchone() == (0,)
