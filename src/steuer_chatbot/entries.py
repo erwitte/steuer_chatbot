@@ -49,6 +49,11 @@ def create_entry(
             raise ValueError(f"A {category} Entry requires a cost")
         if receipt_source_path is None:
             raise ValueError(f"A {category} Entry requires a Receipt")
+    else:
+        if cost_cents is not None:
+            raise ValueError(f"A {category} Entry has no cost")
+        if receipt_source_path is not None:
+            raise ValueError(f"A {category} Entry has no Receipt")
 
     tax_year = entry_date.year
     moved_receipt: Path | None = None

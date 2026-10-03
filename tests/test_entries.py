@@ -118,3 +118,48 @@ def test_unknown_category_is_rejected(
             cost_cents=None,
             receipt_source_path=None,
         )
+
+
+def test_homeoffice_pauschale_entry_has_no_cost_and_no_receipt(
+    conn: psycopg.Connection, receipts_dir: Path
+) -> None:
+    entry = create_entry(
+        conn,
+        receipts_dir,
+        category="homeoffice_pauschale",
+        entry_date=date(2025, 1, 2),
+        cost_cents=None,
+        receipt_source_path=None,
+    )
+
+    assert fetch_row(conn, entry.id) == ("homeoffice_pauschale", date(2025, 1, 2), 2025, None, None)
+    assert list(receipts_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("cost_cents", "with_receipt", "message"),
+    [(1500, False, "cost"), (None, True, "Receipt")],
+)
+def test_homeoffice_pauschale_entry_rejects_a_cost_or_receipt(
+    conn: psycopg.Connection,
+    receipts_dir: Path,
+    download_dir: Path,
+    cost_cents: int | None,
+    with_receipt: bool,
+    message: str,
+) -> None:
+    photo = download_dir / "file_42.jpg"
+    photo.write_bytes(b"jpeg-bytes")
+
+    with pytest.raises(ValueError, match=message):
+        create_entry(
+            conn,
+            receipts_dir,
+            category="homeoffice_pauschale",
+            entry_date=date(2025, 1, 2),
+            cost_cents=cost_cents,
+            receipt_source_path=photo if with_receipt else None,
+        )
+
+    assert conn.execute("SELECT count(*) FROM entries").fetchone() == (0,)
+    assert photo.exists()

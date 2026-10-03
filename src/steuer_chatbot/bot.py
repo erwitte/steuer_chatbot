@@ -49,8 +49,18 @@ COST_QUESTIONS = {
         " (Kursgebühr, Fahrt, Hotel und Verpflegung zusammen)? (z. B. 890,00)"
     ),
 }
+DATE_QUESTIONS = {
+    Category.HOMEOFFICE_PAUSCHALE: "An welchem Tag hast du im Homeoffice gearbeitet?",
+    Category.WEITERBILDUNG: "Von welchem Datum ist der Beleg?",
+    Category.ARBEITSMITTEL: "Von welchem Datum ist der Beleg?",
+}
+DATE_FORMAT_HINT = "(JJJJ-MM-TT oder TT.MM.JJJJ)"
 # Categories with a working guided flow; the others are built in later tickets.
-IMPLEMENTED_CATEGORIES = {Category.ARBEITSMITTEL, Category.WEITERBILDUNG}
+IMPLEMENTED_CATEGORIES = {
+    Category.HOMEOFFICE_PAUSCHALE,
+    Category.ARBEITSMITTEL,
+    Category.WEITERBILDUNG,
+}
 
 CANCELLED_TEXT = "Abgebrochen. Nichts wurde gespeichert."
 STALE_BUTTON_TEXT = "Dieser Button ist nicht mehr aktiv."
@@ -112,6 +122,11 @@ async def choose_category(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await query.answer()
     context.user_data["category"] = category
+    if not category.has_cost_and_receipt:
+        # Flat-rate Categories go straight to the date: no Receipt, no cost.
+        await query.edit_message_text(f"{CATEGORY_LABELS[category]}: {_date_question(category)}")
+        return AWAITING_DATE
+
     await query.edit_message_text(
         f"{CATEGORY_LABELS[category]}: Bitte sende den Beleg als Foto oder PDF."
     )
@@ -149,28 +164,30 @@ async def receive_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def receive_cost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     message = update.effective_message
     assert message is not None and message.text is not None and context.user_data is not None
+    category: Category = context.user_data["category"]
     try:
         context.user_data["cost_cents"] = parse_cost_cents(message.text)
     except ValueError:
-        category: Category = context.user_data["category"]
         await message.reply_text(f"Das ist kein gültiger Betrag. {COST_QUESTIONS[category]}")
         return AWAITING_COST
-    await message.reply_text("Von welchem Datum ist der Beleg? (JJJJ-MM-TT oder TT.MM.JJJJ)")
+    await message.reply_text(_date_question(category))
     return AWAITING_DATE
 
 
 async def receive_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     message = update.effective_message
     assert message is not None and message.text is not None and context.user_data is not None
+    category: Category = context.user_data["category"]
     try:
         entry_date = parse_entry_date(message.text)
     except ValueError:
-        await message.reply_text("Das ist kein gültiges Datum. Bitte JJJJ-MM-TT oder TT.MM.JJJJ eingeben.")
+        await message.reply_text(f"Das ist kein gültiges Datum. {_date_question(category)}")
         return AWAITING_DATE
     context.user_data["entry_date"] = entry_date
 
-    category: Category = context.user_data["category"]
-    cost_cents: int = context.user_data["cost_cents"]
+    cost_line = ""
+    if category.has_cost_and_receipt:
+        cost_line = f"Kosten: {_format_euros(context.user_data['cost_cents'])}\n"
     keyboard = InlineKeyboardMarkup(
         [[
             InlineKeyboardButton("Speichern", callback_data="confirm:save"),
@@ -179,7 +196,7 @@ async def receive_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     )
     await message.reply_text(
         f"{CATEGORY_LABELS[category]}\n"
-        f"Kosten: {_format_euros(cost_cents)}\n"
+        f"{cost_line}"
         f"Datum: {entry_date:%d.%m.%Y} (Steuerjahr {entry_date.year})\n\n"
         "Speichern?",
         reply_markup=keyboard,
@@ -264,6 +281,10 @@ async def outside_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     assert update.effective_message is not None
     await update.effective_message.reply_text("Starte eine neue Erfassung mit /start.")
+
+
+def _date_question(category: Category) -> str:
+    return f"{DATE_QUESTIONS[category]} {DATE_FORMAT_HINT}"
 
 
 def _format_euros(cents: int) -> str:
