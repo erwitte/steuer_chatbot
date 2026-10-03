@@ -4,6 +4,7 @@ import re
 from datetime import date, datetime
 
 _COST = re.compile(r"(\d+)(?:[.,](\d{1,2}))?")
+_COMMUTE_DISTANCE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:km)?", re.IGNORECASE)
 _DATE_FORMATS = ("%Y-%m-%d", "%d.%m.%Y")
 
 
@@ -27,3 +28,14 @@ def parse_entry_date(text: str) -> date:
         except ValueError:
             continue
     raise ValueError(f"Not a valid date: {text!r}")
+
+
+def parse_commute_distance_km(text: str) -> float:
+    """Parse a distance like "42", "42,5" or "42 km" into km."""
+    match = _COMMUTE_DISTANCE.fullmatch(text.strip())
+    if match is None:
+        raise ValueError(f"Not a valid distance: {text!r}")
+    km = float(match.group(1).replace(",", "."))
+    if km <= 0:
+        raise ValueError(f"Distance must be positive: {text!r}")
+    return km

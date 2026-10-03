@@ -20,7 +20,7 @@ def database_url() -> Iterator[str]:
 @pytest.fixture
 def conn(database_url: str) -> Iterator[psycopg.Connection]:
     with psycopg.connect(database_url) as conn:
-        conn.execute("TRUNCATE entries RESTART IDENTITY")
+        conn.execute("TRUNCATE entries, settings RESTART IDENTITY")
         conn.commit()
         yield conn
 

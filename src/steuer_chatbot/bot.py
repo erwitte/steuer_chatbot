@@ -6,6 +6,7 @@ import mimetypes
 import shutil
 import tempfile
 import warnings
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -26,7 +27,8 @@ from telegram.ext import (
 
 from steuer_chatbot.config import Config
 from steuer_chatbot.entries import Category, Entry, create_entry
-from steuer_chatbot.parsing import parse_cost_cents, parse_entry_date
+from steuer_chatbot.parsing import parse_commute_distance_km, parse_cost_cents, parse_entry_date
+from steuer_chatbot.settings import set_commute_distance
 
 log = logging.getLogger(__name__)
 
@@ -35,32 +37,45 @@ warnings.filterwarnings("ignore", message=".*per_message=False.*", category=PTBU
 
 CHOOSING_CATEGORY, AWAITING_RECEIPT, AWAITING_COST, AWAITING_DATE, CONFIRMING = range(5)
 
-CATEGORY_LABELS = {
-    Category.HOMEOFFICE_PAUSCHALE: "Homeoffice-Pauschale",
-    Category.PENDLERPAUSCHALE: "Pendlerpauschale",
-    Category.WEITERBILDUNG: "Weiterbildung",
-    Category.ARBEITSMITTEL: "Arbeitsmittel",
-}
-COST_QUESTIONS = {
-    Category.ARBEITSMITTEL: "Wie hoch waren die Kosten in Euro? (z. B. 49,99)",
-    # One lump cost per Weiterbildung Entry, not itemized (ADR-0001).
-    Category.WEITERBILDUNG: (
-        "Wie hoch waren die Gesamtkosten in Euro"
-        " (Kursgebühr, Fahrt, Hotel und Verpflegung zusammen)? (z. B. 890,00)"
+
+@dataclass(frozen=True)
+class CategoryPrompts:
+    label: str
+    date_question: str
+    # Only Categories with a cost and a Receipt are asked for a cost.
+    cost_question: str | None = None
+
+
+RECEIPT_DATE_QUESTION = "Von welchem Datum ist der Beleg?"
+CATEGORY_PROMPTS = {
+    Category.HOMEOFFICE_PAUSCHALE: CategoryPrompts(
+        label="Homeoffice-Pauschale",
+        date_question="An welchem Tag hast du im Homeoffice gearbeitet?",
+    ),
+    Category.PENDLERPAUSCHALE: CategoryPrompts(
+        label="Pendlerpauschale",
+        date_question="An welchem Tag bist du ins Büro gependelt?",
+    ),
+    Category.WEITERBILDUNG: CategoryPrompts(
+        label="Weiterbildung",
+        date_question=RECEIPT_DATE_QUESTION,
+        # One lump cost per Weiterbildung Entry, not itemized (ADR-0001).
+        cost_question=(
+            "Wie hoch waren die Gesamtkosten in Euro"
+            " (Kursgebühr, Fahrt, Hotel und Verpflegung zusammen)? (z. B. 890,00)"
+        ),
+    ),
+    Category.ARBEITSMITTEL: CategoryPrompts(
+        label="Arbeitsmittel",
+        date_question=RECEIPT_DATE_QUESTION,
+        cost_question="Wie hoch waren die Kosten in Euro? (z. B. 49,99)",
     ),
 }
-DATE_QUESTIONS = {
-    Category.HOMEOFFICE_PAUSCHALE: "An welchem Tag hast du im Homeoffice gearbeitet?",
-    Category.WEITERBILDUNG: "Von welchem Datum ist der Beleg?",
-    Category.ARBEITSMITTEL: "Von welchem Datum ist der Beleg?",
-}
 DATE_FORMAT_HINT = "(JJJJ-MM-TT oder TT.MM.JJJJ)"
-# Categories with a working guided flow; the others are built in later tickets.
-IMPLEMENTED_CATEGORIES = {
-    Category.HOMEOFFICE_PAUSCHALE,
-    Category.ARBEITSMITTEL,
-    Category.WEITERBILDUNG,
-}
+assert set(CATEGORY_PROMPTS) == set(Category) and all(
+    (prompts.cost_question is not None) == category.has_cost_and_receipt
+    for category, prompts in CATEGORY_PROMPTS.items()
+), "CATEGORY_PROMPTS must cover every Category and ask for a cost exactly when it has one"
 
 CANCELLED_TEXT = "Abgebrochen. Nichts wurde gespeichert."
 STALE_BUTTON_TEXT = "Dieser Button ist nicht mehr aktiv."
@@ -102,8 +117,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     assert update.effective_message is not None
     _reset_flow(context)
     keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton(label, callback_data=f"category:{category}")]
-         for category, label in CATEGORY_LABELS.items()]
+        [[InlineKeyboardButton(prompts.label, callback_data=f"category:{category}")]
+         for category, prompts in CATEGORY_PROMPTS.items()]
     )
     await update.effective_message.reply_text(
         "Welche Kategorie möchtest du erfassen? (/cancel zum Abbrechen)",
@@ -116,20 +131,16 @@ async def choose_category(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     assert query is not None and query.data is not None and context.user_data is not None
     category = Category(query.data.removeprefix("category:"))
-    if category not in IMPLEMENTED_CATEGORIES:
-        await query.answer(f"{CATEGORY_LABELS[category]} ist noch nicht verfügbar.", show_alert=True)
-        return CHOOSING_CATEGORY
+    label = CATEGORY_PROMPTS[category].label
 
     await query.answer()
     context.user_data["category"] = category
     if not category.has_cost_and_receipt:
         # Flat-rate Categories go straight to the date: no Receipt, no cost.
-        await query.edit_message_text(f"{CATEGORY_LABELS[category]}: {_date_question(category)}")
+        await query.edit_message_text(f"{label}: {_date_question(category)}")
         return AWAITING_DATE
 
-    await query.edit_message_text(
-        f"{CATEGORY_LABELS[category]}: Bitte sende den Beleg als Foto oder PDF."
-    )
+    await query.edit_message_text(f"{label}: Bitte sende den Beleg als Foto oder PDF.")
     return AWAITING_RECEIPT
 
 
@@ -157,7 +168,7 @@ async def receive_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     context.user_data["receipt"] = receipt_path
 
     category: Category = context.user_data["category"]
-    await message.reply_text(f"Beleg erhalten. {COST_QUESTIONS[category]}")
+    await message.reply_text(f"Beleg erhalten. {_cost_question(category)}")
     return AWAITING_COST
 
 
@@ -168,7 +179,7 @@ async def receive_cost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     try:
         context.user_data["cost_cents"] = parse_cost_cents(message.text)
     except ValueError:
-        await message.reply_text(f"Das ist kein gültiger Betrag. {COST_QUESTIONS[category]}")
+        await message.reply_text(f"Das ist kein gültiger Betrag. {_cost_question(category)}")
         return AWAITING_COST
     await message.reply_text(_date_question(category))
     return AWAITING_DATE
@@ -195,7 +206,7 @@ async def receive_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         ]]
     )
     await message.reply_text(
-        f"{CATEGORY_LABELS[category]}\n"
+        f"{CATEGORY_PROMPTS[category].label}\n"
         f"{cost_line}"
         f"Datum: {entry_date:%d.%m.%Y} (Steuerjahr {entry_date.year})\n\n"
         "Speichern?",
@@ -254,6 +265,32 @@ def _save_entry(
         )
 
 
+async def set_distance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    assert message is not None
+    try:
+        km = parse_commute_distance_km(" ".join(context.args or []))
+    except ValueError:
+        await message.reply_text(
+            "Bitte gib deine Pendelstrecke (Hin- und Rückweg) in km an, z. B. /setdistance 42"
+        )
+        return
+
+    try:
+        await asyncio.to_thread(_store_commute_distance, _config(context), km)
+    except Exception:
+        log.exception("Saving Commute Distance failed")
+        await message.reply_text("Speichern fehlgeschlagen. Bitte später erneut versuchen.")
+        return
+    km_text = f"{km:g}".replace(".", ",")
+    await message.reply_text(f"Pendelstrecke gespeichert: {km_text} km (Hin- und Rückweg).")
+
+
+def _store_commute_distance(config: Config, km: float) -> None:
+    with psycopg.connect(config.database_url) as conn:
+        set_commute_distance(conn, km)
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     assert update.effective_message is not None
     _reset_flow(context)
@@ -284,7 +321,13 @@ async def outside_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 def _date_question(category: Category) -> str:
-    return f"{DATE_QUESTIONS[category]} {DATE_FORMAT_HINT}"
+    return f"{CATEGORY_PROMPTS[category].date_question} {DATE_FORMAT_HINT}"
+
+
+def _cost_question(category: Category) -> str:
+    cost_question = CATEGORY_PROMPTS[category].cost_question
+    assert cost_question is not None, f"{category} has no cost"
+    return cost_question
 
 
 def _format_euros(cents: int) -> str:
@@ -296,6 +339,8 @@ def build_application(config: Config) -> Application:  # type: ignore[type-arg]
     application.bot_data["config"] = config
 
     application.add_handler(TypeHandler(Update, gate), group=-1)
+    # Registered before the guided flow so it also works while a flow is in progress.
+    application.add_handler(CommandHandler("setdistance", set_distance))
     application.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler(["start", "new"], start)],

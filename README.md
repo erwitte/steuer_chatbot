@@ -15,6 +15,8 @@ stored on the host under `RECEIPTS_DIR` (default `./data/receipts`), as
 `{category}/{entry_id}{extension}`.
 
 In Telegram, send `/start` to log an Entry and `/cancel` to abort the current flow.
+Set your round-trip Commute Distance once with `/setdistance <km>` (e.g. `/setdistance 42`);
+sending it again overwrites the stored value.
 
 ## Tests
 

@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from steuer_chatbot.parsing import parse_cost_cents, parse_entry_date
+from steuer_chatbot.parsing import parse_commute_distance_km, parse_cost_cents, parse_entry_date
 
 
 @pytest.mark.parametrize(
@@ -41,3 +41,17 @@ def test_entry_date_is_parsed(text: str, expected: date) -> None:
 def test_invalid_entry_date_is_rejected(text: str) -> None:
     with pytest.raises(ValueError):
         parse_entry_date(text)
+
+
+@pytest.mark.parametrize(
+    ("text", "km"),
+    [("42", 42.0), ("42,5", 42.5), ("42.5", 42.5), (" 12 km ", 12.0), ("7KM", 7.0)],
+)
+def test_commute_distance_is_parsed_to_km(text: str, km: float) -> None:
+    assert parse_commute_distance_km(text) == km
+
+
+@pytest.mark.parametrize("text", ["", "abc", "-5", "0", "0,0", "1e3", "nan", "inf", "42 meilen"])
+def test_invalid_commute_distance_is_rejected(text: str) -> None:
+    with pytest.raises(ValueError):
+        parse_commute_distance_km(text)

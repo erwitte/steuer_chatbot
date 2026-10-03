@@ -10,6 +10,11 @@ CREATE TABLE IF NOT EXISTS entries (
     receipt_path TEXT,        -- NULL for homeoffice_pauschale / pendlerpauschale; relative path under RECEIPTS_DIR
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
